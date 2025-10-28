@@ -2,58 +2,37 @@ import streamlit as st
 import tempfile
 import os
 import pandas as pd
+import zipfile
 from PyPDF2 import PdfReader, PdfWriter
 from pdf2docx import Converter
-import zipfile
 
-st.set_page_config(page_title="Separador DOCX Cloud", layout="centered")
+st.set_page_config(page_title="Separar e Renomear PDFs", layout="centered")
 
-st.title("📄 Separar DOCX por página (Cloud Safe)")
+st.title("📄 Separar e Renomear PDF por Página")
 
 st.markdown("""
-### 🔧 Como funciona:
-1. Você envia o arquivo `.docx` completo  
-2. Ele é convertido internamente em PDF (sem Word nem LibreOffice)  
-3. Cada página vira um arquivo separado  
-4. Os nomes são gerados conforme sua planilha  
-5. Tudo é reconvertido para `.docx` e baixado em ZIP  
+### ⚙️ Como usar:
+1. Envie o PDF **já exportado pelo Word** (com todas as procurações).  
+2. Envie a planilha `.csv` ou `.xlsx` com duas colunas (Nome e Número).  
+3. O app vai separar cada página, renomear conforme a tabela e gerar um `.zip` pronto.  
+4. (Opcional) você pode escolher converter cada página também em `.docx`.  
 ---
 """)
 
-docx_file = st.file_uploader("📎 Envie o arquivo DOCX", type=["docx"])
+pdf_file = st.file_uploader("📎 Envie o arquivo PDF", type=["pdf"])
 table_file = st.file_uploader("📊 Envie a planilha (CSV ou XLSX)", type=["csv", "xlsx"])
+converter_docx = st.checkbox("📝 Também gerar versão .DOCX de cada página", value=False)
 
-
-def convert_docx_to_pdf_with_pdf2docx(docx_path, pdf_path):
-    """Usa pdf2docx para gerar PDF simplificado"""
-    from fpdf import FPDF
-    from docx import Document
-
-    doc = Document(docx_path)
-    pdf = FPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-
-    for p in doc.paragraphs:
-        pdf.multi_cell(0, 10, p.text)
-    pdf.output(pdf_path)
-
-
-if docx_file and table_file:
-    if st.button("🚀 Gerar PDFs e DOCXs Separados"):
-        with st.spinner("Processando, aguarde..."):
+if pdf_file and table_file:
+    if st.button("🚀 Gerar arquivos separados"):
+        with st.spinner("Processando..."):
             with tempfile.TemporaryDirectory() as tmpdir:
-                # Salva DOCX
-                docx_path = os.path.join(tmpdir, "entrada.docx")
-                with open(docx_path, "wb") as f:
-                    f.write(docx_file.read())
+                # Salva PDF
+                pdf_path = os.path.join(tmpdir, "entrada.pdf")
+                with open(pdf_path, "wb") as f:
+                    f.write(pdf_file.read())
 
-                # Converte DOCX → PDF (básico, sem LibreOffice)
-                pdf_path = os.path.join(tmpdir, "saida.pdf")
-                convert_docx_to_pdf_with_pdf2docx(docx_path, pdf_path)
-
-                # Lê planilha
+                # Lê a planilha
                 if table_file.name.endswith(".csv"):
                     df = pd.read_csv(table_file)
                 else:
@@ -68,40 +47,45 @@ if docx_file and table_file:
                 num_linhas = len(df)
                 limite = min(num_pages, num_linhas)
 
-                st.info(f"📄 PDF tem {num_pages} páginas; planilha tem {num_linhas} linhas.")
+                st.info(f"📄 PDF com {num_pages} páginas — Planilha com {num_linhas} linhas.")
+                if num_pages != num_linhas:
+                    st.warning("⚠️ Quantidades diferentes! Serão gerados apenas até o número menor entre páginas e linhas.")
 
                 pdf_dir = os.path.join(tmpdir, "pdfs")
                 docx_dir = os.path.join(tmpdir, "docxs")
                 os.makedirs(pdf_dir, exist_ok=True)
-                os.makedirs(docx_dir, exist_ok=True)
+                if converter_docx:
+                    os.makedirs(docx_dir, exist_ok=True)
 
-                # Divide PDF por página e reconverte
                 progress = st.progress(0)
                 for i in range(limite):
-                    writer = PdfWriter()
-                    writer.add_page(reader.pages[i])
                     nome1 = str(df.iloc[i, 0]).strip().replace("/", "-")
                     nome2 = str(df.iloc[i, 1]).strip().replace("/", "-")
                     base_name = f"PROCURAÇÃO - {nome1} - {nome2}"
 
+                    # Cria PDF separado
+                    writer = PdfWriter()
+                    writer.add_page(reader.pages[i])
                     pdf_out = os.path.join(pdf_dir, f"{base_name}.pdf")
                     with open(pdf_out, "wb") as f_out:
                         writer.write(f_out)
 
-                    # Reconverte para DOCX
-                    docx_out = os.path.join(docx_dir, f"{base_name}.docx")
-                    cv = Converter(pdf_out)
-                    cv.convert(docx_out)
-                    cv.close()
+                    # Se solicitado, gera .docx também
+                    if converter_docx:
+                        docx_out = os.path.join(docx_dir, f"{base_name}.docx")
+                        cv = Converter(pdf_out)
+                        cv.convert(docx_out)
+                        cv.close()
 
                     progress.progress((i + 1) / limite)
 
-                # Gera ZIP final
-                zip_path = os.path.join(tmpdir, "procurações.zip")
+                # Cria ZIP
+                zip_path = os.path.join(tmpdir, "arquivos_separados.zip")
                 with zipfile.ZipFile(zip_path, "w") as zipf:
-                    for file in os.listdir(docx_dir):
-                        zipf.write(os.path.join(docx_dir, file), file)
+                    for folder in [pdf_dir, docx_dir] if converter_docx else [pdf_dir]:
+                        for file in os.listdir(folder):
+                            zipf.write(os.path.join(folder, file), file)
 
                 with open(zip_path, "rb") as f:
-                    st.success("✅ Arquivos gerados com sucesso!")
+                    st.success("✅ Tudo pronto!")
                     st.download_button("📦 Baixar ZIP", f, file_name="procurações.zip", mime="application/zip")
