@@ -31,6 +31,8 @@ table_file = st.file_uploader("📊 Envie a planilha (CSV ou XLSX)", type=["csv"
 # ============ Função principal ============
 def convert_docx_to_pdf(docx_path, output_dir):
     """Converte DOCX em PDF usando LibreOffice headless (mantém formatação)"""
+    subprocess.run(["apt-get", "update"], check=True)
+    subprocess.run(["apt-get", "install", "-y", "libreoffice"], check=True)
     subprocess.run(
         [
             "libreoffice",
