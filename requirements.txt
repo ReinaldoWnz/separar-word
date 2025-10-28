@@ -2,4 +2,6 @@ streamlit
 pandas
 PyPDF2
 pdf2docx
+python-docx
+fpdf
 openpyxl
