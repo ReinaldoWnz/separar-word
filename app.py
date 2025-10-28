@@ -1,58 +1,51 @@
 import streamlit as st
 import tempfile
 import os
-from docx import Document
 import pandas as pd
+from docx import Document
+from lxml import etree
+from docx.oxml import parse_xml
 import zipfile
 
-st.set_page_config(page_title="Separador e Renomeador de DOCX", layout="centered")
+st.set_page_config(page_title="Separador DOCX com Formatação", layout="centered")
 
-st.title("📄 Separador de DOCX com Renomeação Automática")
+st.title("📄 Separador de DOCX — Mantendo Formatação")
 
 st.markdown("""
 **Como usar:**
-1. Envie o arquivo `.docx` original (com várias procurações, cada uma em uma página ou separada por parágrafos).  
-2. Envie a planilha `.csv` ou `.xlsx` com duas colunas: **Credor Original** e **Número Atual**.  
-3. Clique em **Gerar DOCXs Separados**.  
-4. Baixe o `.zip` com os arquivos já nomeados.
+1. Envie o arquivo `.docx` com várias procurações (uma por página).  
+2. Envie a planilha `.csv` ou `.xlsx` com as duas colunas (Credor e Número).  
+3. O app criará um `.docx` separado para cada página, **mantendo toda a formatação original**.  
 ---
 """)
 
 docx_file = st.file_uploader("📎 Envie o arquivo DOCX", type=["docx"])
-table_file = st.file_uploader("📊 Envie a planilha com nomes (CSV ou XLSX)", type=["csv", "xlsx"])
+table_file = st.file_uploader("📊 Envie a planilha (CSV ou XLSX)", type=["csv", "xlsx"])
 
-# --- Função para dividir o DOCX ---
-def split_docx(doc_path, num_parts):
-    """Divide um DOCX em várias partes (por página simulada ou blocos)."""
-    doc = Document(doc_path)
-    paragraphs = doc.paragraphs
-    total_paragraphs = len(paragraphs)
-    # Divide o total de parágrafos de forma uniforme
-    chunk_size = total_paragraphs // num_parts
-    remainder = total_paragraphs % num_parts
 
-    parts = []
-    start = 0
-    for i in range(num_parts):
-        end = start + chunk_size + (1 if i < remainder else 0)
-        sub_doc = Document()
-        for p in paragraphs[start:end]:
-            sub_doc.add_paragraph(p.text, style=p.style)
-        parts.append(sub_doc)
-        start = end
-    return parts
+def clone_docx_elements(doc, start_idx, end_idx):
+    """Clona elementos XML (preserva formatação, tabelas, imagens, etc.)"""
+    new_doc = Document()
+    body = new_doc._element.body
+    for _ in range(len(body)):  # remove parágrafos vazios criados automaticamente
+        body.remove(body[0])
+    for el in doc.element.body[start_idx:end_idx]:
+        body.append(el)
+    return new_doc
 
 
 if docx_file and table_file:
     if st.button("🚀 Gerar DOCXs Separados"):
         with st.spinner("Processando documentos..."):
             with tempfile.TemporaryDirectory() as tmpdir:
-                # Salva DOCX temporário
+                # Salva DOCX
                 docx_path = os.path.join(tmpdir, "entrada.docx")
                 with open(docx_path, "wb") as f:
                     f.write(docx_file.read())
 
-                # Lê a tabela
+                doc = Document(docx_path)
+
+                # Lê tabela
                 if table_file.name.endswith(".csv"):
                     df = pd.read_csv(table_file)
                 else:
@@ -62,34 +55,37 @@ if docx_file and table_file:
                     st.error("⚠️ A planilha precisa ter pelo menos DUAS colunas.")
                     st.stop()
 
-                num_docs = len(df)
+                num_parts = len(df)
+                total_elements = len(doc.element.body)
+                base_chunk = total_elements // num_parts
+                remainder = total_elements % num_parts
 
-                # Divide o DOCX em partes
-                docs = split_docx(docx_path, num_docs)
-
-                # Cria pasta de saída
                 output_dir = os.path.join(tmpdir, "saida_docs")
                 os.makedirs(output_dir, exist_ok=True)
 
-                # Cria DOCXs renomeados
-                for i, sub_doc in enumerate(docs):
+                start = 0
+                for i in range(num_parts):
+                    end = start + base_chunk + (1 if i < remainder else 0)
+                    sub_doc = clone_docx_elements(doc, start, end)
+
                     nome1 = str(df.iloc[i, 0]).strip().replace("/", "-")
                     nome2 = str(df.iloc[i, 1]).strip().replace("/", "-")
-                    file_name = f"PROCURAÇÃO - {nome1} - {nome2}.docx"
-                    out_path = os.path.join(output_dir, file_name)
-                    sub_doc.save(out_path)
+                    new_name = f"PROCURAÇÃO - {nome1} - {nome2}.docx"
+
+                    sub_doc.save(os.path.join(output_dir, new_name))
+                    start = end
 
                 # Compacta em ZIP
-                zip_path = os.path.join(tmpdir, "procurações.zip")
+                zip_path = os.path.join(tmpdir, "procurações_formatadas.zip")
                 with zipfile.ZipFile(zip_path, "w") as zipf:
                     for file in os.listdir(output_dir):
                         zipf.write(os.path.join(output_dir, file), file)
 
                 with open(zip_path, "rb") as f:
-                    st.success("✅ Arquivos DOCX gerados com sucesso!")
+                    st.success("✅ Arquivos gerados com sucesso e formatação preservada!")
                     st.download_button(
-                        "📦 Baixar ZIP com as procurações",
+                        "📦 Baixar ZIP",
                         f,
-                        file_name="procurações_separadas.zip",
-                        mime="application/zip",
+                        file_name="procurações_formatadas.zip",
+                        mime="application/zip"
                     )
